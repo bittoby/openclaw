@@ -79,7 +79,7 @@ export async function listScheduledEventsDiscord(
   return (await rest.get(Routes.guildScheduledEvents(guildId))) as APIGuildScheduledEvent[];
 }
 
-const ALLOWED_EVENT_COVER_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/gif"];
+const ALLOWED_EVENT_COVER_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif"]);
 
 // Loads an image from a URL or path and returns a data URI suitable for the Discord API.
 export async function resolveEventCoverImage(
@@ -90,7 +90,7 @@ export async function resolveEventCoverImage(
     localRoots: opts?.localRoots,
   });
   const contentType = media.contentType?.toLowerCase();
-  if (!contentType || !ALLOWED_EVENT_COVER_TYPES.includes(contentType)) {
+  if (!contentType || !ALLOWED_EVENT_COVER_TYPES.has(contentType)) {
     throw new Error(
       `Discord event cover images must be PNG, JPG, or GIF (got ${contentType ?? "unknown"})`,
     );
