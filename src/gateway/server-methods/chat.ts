@@ -124,6 +124,19 @@ function isMediaBearingPayload(payload: ReplyPayload): boolean {
   return false;
 }
 
+function buildWebchatAudioOnlyAssistantMessage(
+  payloads: ReplyPayload[],
+): { content: Array<Record<string, unknown>>; transcriptText: string } | null {
+  const audioBlocks = buildWebchatAudioContentBlocksFromReplyPayloads(payloads);
+  if (audioBlocks.length === 0) {
+    return null;
+  }
+  return {
+    transcriptText: "Audio reply",
+    content: [{ type: "text", text: "Audio reply" }, ...audioBlocks],
+  };
+}
+
 export const DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS = 12_000;
 const CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024;
 const CHAT_HISTORY_OVERSIZED_PLACEHOLDER = "[chat.history omitted: message too large]";
@@ -1695,6 +1708,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const deliveredReplies: Array<{ payload: ReplyPayload; kind: "block" | "final" }> = [];
+      let appendedWebchatAgentAudio = false;
       let userTranscriptUpdatePromise: Promise<void> | null = null;
       const emitUserTranscriptUpdate = async () => {
         if (userTranscriptUpdatePromise) {
@@ -1756,6 +1770,34 @@ export const chatHandlers: GatewayRequestHandlers = {
           savedImages: await persistedImagesPromise,
         });
       };
+      const appendWebchatAgentAudioTranscriptIfNeeded = (payload: ReplyPayload) => {
+        if (!agentRunStarted || appendedWebchatAgentAudio || !isMediaBearingPayload(payload)) {
+          return;
+        }
+        const audioMessage = buildWebchatAudioOnlyAssistantMessage([payload]);
+        if (!audioMessage) {
+          return;
+        }
+        const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(sessionKey);
+        const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+        const appended = appendAssistantTranscriptMessage({
+          message: audioMessage.transcriptText,
+          content: audioMessage.content,
+          sessionId,
+          storePath: latestStorePath,
+          sessionFile: latestEntry?.sessionFile,
+          agentId,
+          createIfMissing: true,
+          idempotencyKey: `${clientRunId}:assistant-audio`,
+        });
+        if (appended.ok) {
+          appendedWebchatAgentAudio = true;
+          return;
+        }
+        context.logGateway.warn(
+          `webchat transcript append failed for audio reply: ${appended.error ?? "unknown error"}`,
+        );
+      };
       const dispatcher = createReplyDispatcher({
         ...replyPipeline,
         onError: (err) => {
@@ -1766,6 +1808,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             case "block":
             case "final":
               deliveredReplies.push({ payload, kind: info.kind });
+              appendWebchatAgentAudioTranscriptIfNeeded(payload);
               break;
             case "tool":
               // Tool results that carry audio (e.g. the TTS tool) must be promoted
