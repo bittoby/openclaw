@@ -8,7 +8,18 @@ const hoisted = vi.hoisted(() => ({
   listSessionsFromStoreMock: vi.fn(),
   migrateAndPruneGatewaySessionStoreKeyMock: vi.fn(),
   resolveGatewaySessionStoreTargetMock: vi.fn(),
+  listAgentIdsMock: vi.fn(),
 }));
+
+vi.mock("../agents/agent-scope.js", async () => {
+  const actual = await vi.importActual<typeof import("../agents/agent-scope.js")>(
+    "../agents/agent-scope.js",
+  );
+  return {
+    ...actual,
+    listAgentIds: hoisted.listAgentIdsMock,
+  };
+});
 
 vi.mock("../config/sessions.js", async () => {
   const actual =
@@ -43,6 +54,9 @@ describe("resolveSessionKeyFromResolveParams", () => {
     hoisted.listSessionsFromStoreMock.mockReset();
     hoisted.migrateAndPruneGatewaySessionStoreKeyMock.mockReset();
     hoisted.resolveGatewaySessionStoreTargetMock.mockReset();
+    hoisted.listAgentIdsMock.mockReset();
+    // Default: all agents are known (main is always present).
+    hoisted.listAgentIdsMock.mockReturnValue(["main"]);
     hoisted.resolveGatewaySessionStoreTargetMock.mockReturnValue({
       canonicalKey,
       storeKeys: [canonicalKey, legacyKey],
@@ -110,6 +124,33 @@ describe("resolveSessionKeyFromResolveParams", () => {
         includeUnknown: false,
         spawnedBy: "controller-1",
         agentId: undefined,
+      },
+    });
+  });
+
+  it("rejects sessions belonging to a deleted agent (key-based lookup)", async () => {
+    const deletedAgentKey = "agent:deleted-agent:main";
+    hoisted.resolveGatewaySessionStoreTargetMock.mockReturnValue({
+      canonicalKey: deletedAgentKey,
+      storeKeys: [deletedAgentKey],
+      storePath,
+    });
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      [deletedAgentKey]: { sessionId: "sess-orphan", updatedAt: 1 },
+    });
+    // "deleted-agent" is not in the known agents list.
+    hoisted.listAgentIdsMock.mockReturnValue(["main"]);
+
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: {},
+      p: { key: deletedAgentKey },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: ErrorCodes.INVALID_REQUEST,
+        message: 'Agent "deleted-agent" no longer exists in configuration',
       },
     });
   });

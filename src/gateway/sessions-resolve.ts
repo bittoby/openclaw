@@ -1,5 +1,7 @@
+import { listAgentIds } from "../agents/agent-scope.js";
 import { loadSessionStore, updateSessionStore } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { DEFAULT_AGENT_ID, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import {
@@ -31,6 +33,28 @@ function noSessionFoundResult(key: string): SessionsResolveResult {
     ok: false,
     error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${key}`),
   };
+}
+
+/** Rejects sessions whose owning agent no longer exists in config (#65524). */
+function validateSessionAgentExists(
+  cfg: OpenClawConfig,
+  key: string,
+): SessionsResolveResult | null {
+  const agentId = resolveAgentIdFromSessionKey(key);
+  // DEFAULT_AGENT_ID cannot be deleted and is implied by legacy/global keys.
+  if (agentId === DEFAULT_AGENT_ID) {
+    return null;
+  }
+  if (!listAgentIds(cfg).includes(agentId)) {
+    return {
+      ok: false,
+      error: errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        `Agent "${agentId}" no longer exists in configuration`,
+      ),
+    };
+  }
+  return null;
 }
 
 function isResolvedSessionKeyVisible(params: {
@@ -94,6 +118,10 @@ export async function resolveSessionKeyFromResolveParams(params: {
       ) {
         return noSessionFoundResult(key);
       }
+      const agentCheck = validateSessionAgentExists(cfg, target.canonicalKey);
+      if (agentCheck) {
+        return agentCheck;
+      }
       return { ok: true, key: target.canonicalKey };
     }
     const legacyKey = target.storeKeys.find((candidate) => store[candidate]);
@@ -116,6 +144,10 @@ export async function resolveSessionKeyFromResolveParams(params: {
       })
     ) {
       return noSessionFoundResult(key);
+    }
+    const agentCheckLegacy = validateSessionAgentExists(cfg, target.canonicalKey);
+    if (agentCheckLegacy) {
+      return agentCheckLegacy;
     }
     return { ok: true, key: target.canonicalKey };
   }
@@ -151,6 +183,10 @@ export async function resolveSessionKeyFromResolveParams(params: {
           `Multiple sessions found for sessionId: ${sessionId} (${keys})`,
         ),
       };
+    }
+    const agentCheckSessionId = validateSessionAgentExists(cfg, matches[0].key);
+    if (agentCheckSessionId) {
+      return agentCheckSessionId;
     }
     return { ok: true, key: matches[0].key };
   }
@@ -197,5 +233,9 @@ export async function resolveSessionKeyFromResolveParams(params: {
     };
   }
 
+  const agentCheckLabel = validateSessionAgentExists(cfg, list.sessions[0].key);
+  if (agentCheckLabel) {
+    return agentCheckLabel;
+  }
   return { ok: true, key: list.sessions[0].key };
 }

@@ -1,8 +1,17 @@
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { replaceConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
-import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
-import { DEFAULT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
+import {
+  resolveSessionTranscriptsDirForAgent,
+  resolveStorePath,
+  updateSessionStore,
+} from "../config/sessions.js";
+import { getLogger } from "../logging/logger.js";
+import {
+  DEFAULT_AGENT_ID,
+  normalizeAgentId,
+  resolveAgentIdFromSessionKey,
+} from "../routing/session-key.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { createClackPrompter } from "../wizard/clack-prompter.js";
@@ -78,6 +87,20 @@ export async function agentsDeleteCommand(
   });
   if (!opts.json) {
     logConfigUpdated(runtime);
+  }
+
+  // Purge session store entries for this agent so orphaned sessions cannot be targeted (#65524).
+  try {
+    const storePath = resolveStorePath(cfg.session?.store, { agentId });
+    await updateSessionStore(storePath, (store) => {
+      for (const key of Object.keys(store)) {
+        if (resolveAgentIdFromSessionKey(key) === agentId) {
+          delete store[key];
+        }
+      }
+    });
+  } catch (err) {
+    getLogger().debug("session store purge skipped during agent delete", err);
   }
 
   const quietRuntime = opts.json ? createQuietRuntime(runtime) : runtime;
