@@ -1,7 +1,5 @@
-import { listAgentIds } from "../agents/agent-scope.js";
 import { loadSessionStore, updateSessionStore } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { DEFAULT_AGENT_ID, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import {
@@ -14,6 +12,7 @@ import {
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
   migrateAndPruneGatewaySessionStoreKey,
+  resolveDeletedAgentIdFromSessionKey,
   resolveGatewaySessionStoreTarget,
 } from "./session-utils.js";
 
@@ -40,21 +39,17 @@ function validateSessionAgentExists(
   cfg: OpenClawConfig,
   key: string,
 ): SessionsResolveResult | null {
-  const agentId = resolveAgentIdFromSessionKey(key);
-  // DEFAULT_AGENT_ID cannot be deleted and is implied by legacy/global keys.
-  if (agentId === DEFAULT_AGENT_ID) {
+  const deletedAgentId = resolveDeletedAgentIdFromSessionKey(cfg, key);
+  if (deletedAgentId === null) {
     return null;
   }
-  if (!listAgentIds(cfg).includes(agentId)) {
-    return {
-      ok: false,
-      error: errorShape(
-        ErrorCodes.INVALID_REQUEST,
-        `Agent "${agentId}" no longer exists in configuration`,
-      ),
-    };
-  }
-  return null;
+  return {
+    ok: false,
+    error: errorShape(
+      ErrorCodes.INVALID_REQUEST,
+      `Agent "${deletedAgentId}" no longer exists in configuration`,
+    ),
+  };
 }
 
 function isResolvedSessionKeyVisible(params: {
