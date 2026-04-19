@@ -158,6 +158,32 @@ describe("resolveSessionKeyFromResolveParams", () => {
     });
   });
 
+  it("rejects non-alias agent:main sessions when main is no longer configured", async () => {
+    const staleMainKey = "agent:main:discord:direct:u1";
+    hoisted.resolveGatewaySessionStoreTargetMock.mockReturnValue({
+      canonicalKey: staleMainKey,
+      storeKeys: [staleMainKey],
+      storePath,
+    });
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      [staleMainKey]: { sessionId: "sess-stale-main", updatedAt: 1 },
+    });
+    hoisted.listAgentIdsMock.mockReturnValue(["ops"]);
+
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: { agents: { list: [{ id: "ops", default: true }] } },
+      p: { key: staleMainKey },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: ErrorCodes.INVALID_REQUEST,
+        message: 'Agent "main" no longer exists in configuration',
+      },
+    });
+  });
+
   it("rejects sessions belonging to a deleted agent (sessionId-based lookup)", async () => {
     const deletedAgentKey = "agent:deleted-agent:main";
     hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({

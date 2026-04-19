@@ -1,13 +1,15 @@
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import {
   canonicalizeMainSessionAlias,
   resolveMainSessionKey,
 } from "../config/sessions/main-session.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
+  DEFAULT_AGENT_ID,
   normalizeAgentId,
   normalizeMainKey,
   parseAgentSessionKey,
+  type ParsedAgentSessionKey,
 } from "../routing/session-key.js";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -29,6 +31,22 @@ function resolveDefaultStoreAgentId(cfg: OpenClawConfig): string {
   return normalizeAgentId(resolveDefaultAgentId(cfg));
 }
 
+function resolveParsedSessionStoreAgentId(
+  cfg: OpenClawConfig,
+  parsed: ParsedAgentSessionKey,
+): string {
+  const agentId = normalizeAgentId(parsed.agentId);
+  if (agentId !== DEFAULT_AGENT_ID || listAgentIds(cfg).includes(DEFAULT_AGENT_ID)) {
+    return agentId;
+  }
+  const rest = normalizeLowercaseStringOrEmpty(parsed.rest);
+  const mainKey = normalizeMainKey(cfg.session?.mainKey);
+  if (rest === "main" || rest === mainKey) {
+    return resolveDefaultStoreAgentId(cfg);
+  }
+  return agentId;
+}
+
 export function resolveSessionStoreKey(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
@@ -44,8 +62,12 @@ export function resolveSessionStoreKey(params: {
 
   const parsed = parseAgentSessionKey(raw);
   if (parsed) {
-    const agentId = normalizeAgentId(parsed.agentId);
-    const lowered = normalizeLowercaseStringOrEmpty(raw);
+    const originalAgentId = normalizeAgentId(parsed.agentId);
+    const agentId = resolveParsedSessionStoreAgentId(params.cfg, parsed);
+    const lowered =
+      agentId === originalAgentId
+        ? normalizeLowercaseStringOrEmpty(raw)
+        : `agent:${agentId}:${normalizeLowercaseStringOrEmpty(parsed.rest)}`;
     const canonical = canonicalizeMainSessionAlias({
       cfg: params.cfg,
       agentId,

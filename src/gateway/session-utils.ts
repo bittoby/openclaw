@@ -42,11 +42,9 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
 import {
-  DEFAULT_AGENT_ID,
   normalizeAgentId,
   normalizeMainKey,
   parseAgentSessionKey,
-  resolveAgentIdFromSessionKey,
 } from "../routing/session-key.js";
 import { isCronRunSessionKey } from "../sessions/session-key-utils.js";
 import {
@@ -396,17 +394,18 @@ function resolveTranscriptUsageFallback(params: {
 
 /**
  * Returns the owning agent id if the session key belongs to an agent that is no
- * longer present in config (deleted). Returns null for legacy/global keys, the
- * default agent, or when the owning agent still exists (#65524).
+ * longer present in config (deleted). Returns null for non-agent legacy/global
+ * keys, or when the owning agent still exists (#65524).
  */
 export function resolveDeletedAgentIdFromSessionKey(
   cfg: OpenClawConfig,
   sessionKey: string,
 ): string | null {
-  const agentId = resolveAgentIdFromSessionKey(sessionKey);
-  if (agentId === DEFAULT_AGENT_ID) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (!parsed) {
     return null;
   }
+  const agentId = normalizeAgentId(parsed.agentId);
   if (listAgentIds(cfg).includes(agentId)) {
     return null;
   }
