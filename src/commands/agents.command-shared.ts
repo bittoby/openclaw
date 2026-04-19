@@ -1,3 +1,4 @@
+import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveStorePath, updateSessionStore } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveStoredSessionOwnerAgentId } from "../gateway/session-store-key.js";
@@ -28,13 +29,18 @@ export async function purgeAgentSessionStoreEntries(
 ): Promise<void> {
   try {
     const normalizedAgentId = normalizeAgentId(agentId);
+    const storeConfig = cfg.session?.store;
+    const storeAgentId =
+      typeof storeConfig === "string" && storeConfig.includes("{agentId}")
+        ? normalizedAgentId
+        : normalizeAgentId(resolveDefaultAgentId(cfg));
     const storePath = resolveStorePath(cfg.session?.store, { agentId: normalizedAgentId });
     await updateSessionStore(storePath, (store) => {
       for (const key of Object.keys(store)) {
         if (
           resolveStoredSessionOwnerAgentId({
             cfg,
-            agentId: normalizedAgentId,
+            agentId: storeAgentId,
             sessionKey: key,
           }) === normalizedAgentId
         ) {

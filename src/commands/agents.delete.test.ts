@@ -116,4 +116,43 @@ describe("agents delete command", () => {
       });
     });
   });
+
+  it("preserves shared-store legacy default keys when deleting another agent", async () => {
+    await withStateDirEnv("openclaw-agents-delete-shared-store-", async ({ stateDir }) => {
+      const cfg: OpenClawConfig = {
+        session: { store: path.join(stateDir, "sessions.json") },
+        agents: {
+          list: [
+            { id: "main", default: true, workspace: path.join(stateDir, "workspace-main") },
+            { id: "ops", workspace: path.join(stateDir, "workspace-ops") },
+          ],
+        },
+      };
+      const storePath = resolveStorePath(cfg.session?.store, { agentId: "ops" });
+      await saveSessionStore(storePath, {
+        main: { sessionId: "sess-main", updatedAt: 1 },
+        "discord:direct:u1": { sessionId: "sess-main-direct", updatedAt: 2 },
+        "agent:ops:main": { sessionId: "sess-ops-main", updatedAt: 3 },
+        "agent:ops:discord:direct:u2": { sessionId: "sess-ops-direct", updatedAt: 4 },
+      });
+      await fs.mkdir(path.join(stateDir, "workspace-ops"), { recursive: true });
+      await fs.mkdir(path.join(stateDir, "agents", "ops", "agent"), { recursive: true });
+
+      configMocks.readConfigFileSnapshot.mockResolvedValue({
+        ...baseConfigSnapshot,
+        config: cfg,
+        runtimeConfig: cfg,
+        sourceConfig: cfg,
+        resolved: cfg,
+      });
+
+      await agentsDeleteCommand({ id: "ops", force: true, json: true }, runtime);
+
+      expect(runtime.exit).not.toHaveBeenCalled();
+      expect(loadSessionStore(storePath, { skipCache: true })).toEqual({
+        main: { sessionId: "sess-main", updatedAt: 1 },
+        "discord:direct:u1": { sessionId: "sess-main-direct", updatedAt: 2 },
+      });
+    });
+  });
 });
