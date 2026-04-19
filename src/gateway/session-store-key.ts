@@ -31,20 +31,33 @@ function resolveDefaultStoreAgentId(cfg: OpenClawConfig): string {
   return normalizeAgentId(resolveDefaultAgentId(cfg));
 }
 
-function resolveParsedSessionStoreAgentId(
+function shouldRemapLegacyDefaultMainAlias(
   cfg: OpenClawConfig,
   parsed: ParsedAgentSessionKey,
-): string {
+): boolean {
   const agentId = normalizeAgentId(parsed.agentId);
   if (agentId !== DEFAULT_AGENT_ID || listAgentIds(cfg).includes(DEFAULT_AGENT_ID)) {
-    return agentId;
+    return false;
   }
   const rest = normalizeLowercaseStringOrEmpty(parsed.rest);
   const mainKey = normalizeMainKey(cfg.session?.mainKey);
-  if (rest === "main" || rest === mainKey) {
-    return resolveDefaultStoreAgentId(cfg);
+  return rest === "main" || rest === mainKey;
+}
+
+function resolveParsedSessionStoreKey(
+  cfg: OpenClawConfig,
+  raw: string,
+  parsed: ParsedAgentSessionKey,
+): { agentId: string; sessionKey: string } {
+  if (!shouldRemapLegacyDefaultMainAlias(cfg, parsed)) {
+    return {
+      agentId: normalizeAgentId(parsed.agentId),
+      sessionKey: normalizeLowercaseStringOrEmpty(raw),
+    };
   }
-  return agentId;
+  const agentId = resolveDefaultStoreAgentId(cfg);
+  const rest = normalizeLowercaseStringOrEmpty(parsed.rest);
+  return { agentId, sessionKey: `agent:${agentId}:${rest}` };
 }
 
 export function resolveSessionStoreKey(params: {
@@ -62,21 +75,16 @@ export function resolveSessionStoreKey(params: {
 
   const parsed = parseAgentSessionKey(raw);
   if (parsed) {
-    const originalAgentId = normalizeAgentId(parsed.agentId);
-    const agentId = resolveParsedSessionStoreAgentId(params.cfg, parsed);
-    const lowered =
-      agentId === originalAgentId
-        ? normalizeLowercaseStringOrEmpty(raw)
-        : `agent:${agentId}:${normalizeLowercaseStringOrEmpty(parsed.rest)}`;
+    const resolved = resolveParsedSessionStoreKey(params.cfg, raw, parsed);
     const canonical = canonicalizeMainSessionAlias({
       cfg: params.cfg,
-      agentId,
-      sessionKey: lowered,
+      agentId: resolved.agentId,
+      sessionKey: resolved.sessionKey,
     });
-    if (canonical !== lowered) {
+    if (canonical !== resolved.sessionKey) {
       return canonical;
     }
-    return lowered;
+    return resolved.sessionKey;
   }
 
   const lowered = normalizeLowercaseStringOrEmpty(raw);
