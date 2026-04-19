@@ -63,10 +63,10 @@ import {
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 import {
-  canonicalizeSessionKeyForAgent,
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
   resolveSessionStoreKey,
+  resolveStoredSessionKeyForAgentStore,
 } from "./session-store-key.js";
 import {
   readLatestSessionUsageFromTranscript,
@@ -927,7 +927,11 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
     const store = loadSessionStore(storePath);
     const combined: Record<string, SessionEntry> = {};
     for (const [key, entry] of Object.entries(store)) {
-      const canonicalKey = canonicalizeSessionKeyForAgent(defaultAgentId, key);
+      const canonicalKey = resolveStoredSessionKeyForAgentStore({
+        cfg,
+        agentId: defaultAgentId,
+        sessionKey: key,
+      });
       mergeSessionEntryIntoCombined({
         cfg,
         combined,
@@ -946,7 +950,11 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
     const storePath = target.storePath;
     const store = loadSessionStore(storePath);
     for (const [key, entry] of Object.entries(store)) {
-      const canonicalKey = canonicalizeSessionKeyForAgent(agentId, key);
+      const canonicalKey = resolveStoredSessionKeyForAgentStore({
+        cfg,
+        agentId,
+        sessionKey: key,
+      });
       mergeSessionEntryIntoCombined({
         cfg,
         combined,

@@ -107,6 +107,35 @@ export function resolveSessionStoreAgentId(cfg: OpenClawConfig, canonicalKey: st
   return resolveDefaultStoreAgentId(cfg);
 }
 
+export function resolveStoredSessionKeyForAgentStore(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+}): string {
+  const raw = normalizeOptionalString(params.sessionKey) ?? "";
+  if (!raw) {
+    return raw;
+  }
+  const lowered = normalizeLowercaseStringOrEmpty(raw);
+  if (lowered === "global" || lowered === "unknown") {
+    return lowered;
+  }
+  const key = parseAgentSessionKey(raw) ? raw : canonicalizeSessionKeyForAgent(params.agentId, raw);
+  return resolveSessionStoreKey({ cfg: params.cfg, sessionKey: key });
+}
+
+export function resolveStoredSessionOwnerAgentId(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+}): string | null {
+  const canonicalKey = resolveStoredSessionKeyForAgentStore(params);
+  if (canonicalKey === "global" || canonicalKey === "unknown") {
+    return null;
+  }
+  return resolveSessionStoreAgentId(params.cfg, canonicalKey);
+}
+
 export function canonicalizeSpawnedByForAgent(
   cfg: OpenClawConfig,
   agentId: string,
