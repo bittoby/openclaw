@@ -553,6 +553,83 @@ describe("model-pricing-cache", () => {
     stop();
   });
 
+  it("unrefs the 24-hour refresh timer so SIGINT exits cleanly", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "anthropic/claude-opus-4-6" },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const fetchImpl = withFetchPreconnect(async () => {
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const longTimers: NodeJS.Timeout[] = [];
+    const wrappedSetTimeout = ((handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+      const timer = originalSetTimeout(handler, ms, ...args);
+      if (ms === 24 * 60 * 60_000) {
+        longTimers.push(timer as unknown as NodeJS.Timeout);
+      }
+      return timer;
+    }) as typeof globalThis.setTimeout;
+    Object.assign(wrappedSetTimeout, originalSetTimeout);
+    globalThis.setTimeout = wrappedSetTimeout;
+
+    try {
+      await refreshGatewayModelPricingCache({ config, fetchImpl });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(longTimers).toHaveLength(1);
+    expect(longTimers[0].hasRef()).toBe(false);
+  });
+
+  it("aborts in-flight pricing fetches when stop is called", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "anthropic/claude-opus-4-6" },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    const observedSignals: AbortSignal[] = [];
+    const pendingFetches: Array<Promise<Response>> = [];
+    const fetchImpl = withFetchPreconnect((_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) {
+        throw new Error("expected fetch to receive an AbortSignal");
+      }
+      observedSignals.push(signal);
+      const promise = new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+      pendingFetches.push(promise);
+      return promise;
+    });
+
+    const stop = startGatewayModelPricingRefresh({ config, fetchImpl });
+
+    await vi.dynamicImportSettled();
+
+    expect(observedSignals).toHaveLength(2);
+    expect(observedSignals.some((signal) => signal.aborted)).toBe(false);
+
+    stop();
+
+    expect(observedSignals.every((signal) => signal.aborted)).toBe(true);
+
+    await Promise.allSettled(pendingFetches);
+  });
+
   it("logs configured timeout seconds when pricing fetches time out", async () => {
     const warnings: string[] = [];
     loggingState.rawConsole = {

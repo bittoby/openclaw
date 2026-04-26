@@ -62,6 +62,7 @@ const log = createSubsystemLogger("gateway").child("model-pricing");
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlightRefresh: Promise<void> | null = null;
+let inFlightRefreshAbort: AbortController | null = null;
 
 function clearRefreshTimer(): void {
   if (!refreshTimer) {
@@ -69,6 +70,24 @@ function clearRefreshTimer(): void {
   }
   clearTimeout(refreshTimer);
   refreshTimer = null;
+}
+
+function unrefRefreshTimer(): void {
+  if (refreshTimer && typeof refreshTimer === "object" && "unref" in refreshTimer) {
+    refreshTimer.unref();
+  }
+}
+
+function abortInFlightRefresh(): void {
+  if (inFlightRefreshAbort) {
+    inFlightRefreshAbort.abort();
+    inFlightRefreshAbort = null;
+  }
+}
+
+function buildPricingFetchSignal(cancelSignal: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  return AbortSignal.any([timeoutSignal, cancelSignal]);
 }
 
 function listLikeFallbacks(value: ModelListLike): string[] {
@@ -248,10 +267,13 @@ function parseLiteLLMPricing(entry: LiteLLMModelEntry): CachedModelPricing | nul
 
 type LiteLLMPricingCatalog = Map<string, CachedModelPricing>;
 
-async function fetchLiteLLMPricingCatalog(fetchImpl: typeof fetch): Promise<LiteLLMPricingCatalog> {
+async function fetchLiteLLMPricingCatalog(
+  fetchImpl: typeof fetch,
+  cancelSignal: AbortSignal,
+): Promise<LiteLLMPricingCatalog> {
   const response = await fetchImpl(LITELLM_PRICING_URL, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: buildPricingFetchSignal(cancelSignal),
   });
   if (!response.ok) {
     throw new Error(`LiteLLM pricing fetch failed: HTTP ${response.status}`);
@@ -481,10 +503,11 @@ export function collectConfiguredModelPricingRefs(config: OpenClawConfig): Model
 
 async function fetchOpenRouterPricingCatalog(
   fetchImpl: typeof fetch,
+  cancelSignal: AbortSignal,
 ): Promise<Map<string, OpenRouterPricingEntry>> {
   const response = await fetchImpl(OPENROUTER_MODELS_URL, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: buildPricingFetchSignal(cancelSignal),
   });
   if (!response.ok) {
     throw new Error(`OpenRouter /models failed: HTTP ${response.status}`);
@@ -536,6 +559,7 @@ function scheduleRefresh(params: { config: OpenClawConfig; fetchImpl: typeof fet
       log.warn(`pricing refresh failed: ${String(error)}`);
     });
   }, CACHE_TTL_MS);
+  unrefRefreshTimer();
 }
 
 export async function refreshGatewayModelPricingCache(params: {
@@ -546,6 +570,9 @@ export async function refreshGatewayModelPricingCache(params: {
     return await inFlightRefresh;
   }
   const fetchImpl = params.fetchImpl ?? fetch;
+  const abortController = new AbortController();
+  inFlightRefreshAbort = abortController;
+  const cancelSignal = abortController.signal;
   inFlightRefresh = (async () => {
     const refs = collectConfiguredModelPricingRefs(params.config);
     if (refs.length === 0) {
@@ -559,12 +586,12 @@ export async function refreshGatewayModelPricingCache(params: {
     let openRouterFailed = false;
     let litellmFailed = false;
     const [catalogById, litellmCatalog] = await Promise.all([
-      fetchOpenRouterPricingCatalog(fetchImpl).catch((error: unknown) => {
+      fetchOpenRouterPricingCatalog(fetchImpl, cancelSignal).catch((error: unknown) => {
         log.warn(formatPricingFetchFailure("OpenRouter", error));
         openRouterFailed = true;
         return new Map<string, OpenRouterPricingEntry>();
       }),
-      fetchLiteLLMPricingCatalog(fetchImpl).catch((error: unknown) => {
+      fetchLiteLLMPricingCatalog(fetchImpl, cancelSignal).catch((error: unknown) => {
         log.warn(formatPricingFetchFailure("LiteLLM", error));
         litellmFailed = true;
         return new Map<string, CachedModelPricing>() as LiteLLMPricingCatalog;
@@ -648,6 +675,9 @@ export async function refreshGatewayModelPricingCache(params: {
     await inFlightRefresh;
   } finally {
     inFlightRefresh = null;
+    if (inFlightRefreshAbort === abortController) {
+      inFlightRefreshAbort = null;
+    }
   }
 }
 
@@ -667,6 +697,7 @@ export function startGatewayModelPricingRefresh(params: {
   return () => {
     stopped = true;
     clearRefreshTimer();
+    abortInFlightRefresh();
   };
 }
 
@@ -681,5 +712,6 @@ export function getGatewayModelPricingCacheMeta(): {
 export function __resetGatewayModelPricingCacheForTest(): void {
   clearGatewayModelPricingCacheState();
   clearRefreshTimer();
+  abortInFlightRefresh();
   inFlightRefresh = null;
 }
