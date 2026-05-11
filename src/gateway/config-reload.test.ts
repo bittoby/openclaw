@@ -157,7 +157,7 @@ describe("buildGatewayReloadPlan", () => {
       listAccountIds: () => [],
       resolveAccount: () => ({}),
     },
-    reload: { configPrefixes: ["web"], noopPrefixes: ["channels.whatsapp"] },
+    reload: { configPrefixes: ["channels.whatsapp"] },
   };
   const registry = createTestRegistry([
     { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
@@ -202,7 +202,7 @@ describe("buildGatewayReloadPlan", () => {
   });
 
   it("restarts providers when provider config prefixes change", () => {
-    const changedPaths = ["web.enabled", "channels.telegram.botToken"];
+    const changedPaths = ["channels.whatsapp.allowFrom", "channels.telegram.botToken"];
     const plan = buildGatewayReloadPlan(changedPaths);
     expect(plan.restartGateway).toBe(false);
     const expected = new Set(

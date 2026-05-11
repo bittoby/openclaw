@@ -40,6 +40,34 @@ import {
 
 const WHATSAPP_CHANNEL = "whatsapp" as const;
 
+// Single source of truth for `channels.whatsapp` — the root segment used by
+// the gateway reload planner, doctor diagnostics, and path-builder helpers.
+export function whatsappChannelConfigRoot(): string {
+  return `channels.${WHATSAPP_CHANNEL}`;
+}
+
+// Account-scoped config root for `channels.whatsapp.accounts.<key>` lookups.
+export function whatsappAccountConfigRoot(accountKey: string): string {
+  return `${whatsappChannelConfigRoot()}.accounts.${accountKey}`;
+}
+
+// Config path of a specific group entry under the channel-root allowlist
+// touched by issue #80704 (`channels.whatsapp.groups.<id>`).
+export function whatsappGroupConfigPath(groupId: string): string {
+  return `${whatsappChannelConfigRoot()}.groups.${groupId}`;
+}
+
+// Reload classification for `channels.whatsapp.*`. Routes config edits through
+// `restart-channel:whatsapp` instead of silently noop-ing them (#80704). Every
+// other channel plugin in the repo uses the same `channels.<id>` idiom.
+function buildWhatsAppReloadDeclaration(): NonNullable<ChannelPlugin["reload"]> {
+  return {
+    configPrefixes: [whatsappChannelConfigRoot()],
+  };
+}
+
+export const WHATSAPP_RELOAD_DECLARATION = buildWhatsAppReloadDeclaration();
+
 const WHATSAPP_GROUP_SCOPE_FIELDS = ["groupPolicy", "groupAllowFrom", "groups"] as const;
 
 type WhatsAppGroupScopeField = (typeof WHATSAPP_GROUP_SCOPE_FIELDS)[number];
@@ -73,13 +101,17 @@ function resolveWhatsAppGroupScopeBasePath(params: {
   const defaultAccountConfig = defaultAccountKey ? accounts?.[defaultAccountKey] : undefined;
   const matchesAnyGroupScopeField = (config: Record<string, unknown> | undefined): boolean =>
     WHATSAPP_GROUP_SCOPE_FIELDS.some((field) => config?.[field] !== undefined);
-  if (matchesAnyGroupScopeField(accountConfig)) {
-    return `channels.whatsapp.accounts.${accountKey}`;
+  if (accountKey && matchesAnyGroupScopeField(accountConfig)) {
+    return whatsappAccountConfigRoot(accountKey);
   }
-  if (accountId !== DEFAULT_ACCOUNT_ID && matchesAnyGroupScopeField(defaultAccountConfig)) {
-    return `channels.whatsapp.accounts.${defaultAccountKey}`;
+  if (
+    defaultAccountKey &&
+    accountId !== DEFAULT_ACCOUNT_ID &&
+    matchesAnyGroupScopeField(defaultAccountConfig)
+  ) {
+    return whatsappAccountConfigRoot(defaultAccountKey);
   }
-  return "channels.whatsapp";
+  return whatsappChannelConfigRoot();
 }
 
 function resolveWhatsAppConfigPath(params: {
@@ -219,7 +251,7 @@ export function createWhatsAppPluginBase(params: {
         },
       },
     },
-    reload: { configPrefixes: ["web"], noopPrefixes: ["channels.whatsapp"] },
+    reload: WHATSAPP_RELOAD_DECLARATION,
     gatewayMethods: ["web.login.start", "web.login.wait"],
     configSchema: WhatsAppChannelConfigSchema,
     config: {
